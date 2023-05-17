@@ -1,11 +1,10 @@
-"""Python Flask WebApp Auth0 integration example
-"""
-
-import json
+import jwt
+from jwt import PyJWKClient
+from starlette.responses import JSONResponse
 from os import environ as env
 from urllib.parse import quote_plus, urlencode
 from fastapi.middleware.cors import CORSMiddleware
-
+import time
 from dotenv import find_dotenv, load_dotenv
 from fastapi import FastAPI, Request, APIRouter
 from starlette.middleware.sessions import SessionMiddleware
@@ -61,6 +60,44 @@ async def login(request):
     return await oauth.auth0.authorize_redirect(
        request, str(redirect_uri)
     )
+
+from fastapi import HTTPException
+
+@auth_router.route("/verify", methods=["POST"])
+async def verify(request):
+    print("Verify json")
+    try:
+        body = await request.json()
+        print(body)
+        token_id = body["id_token"]
+        if not token_id:
+            raise HTTPException(status_code=400, detail="Missing id_token in request body")
+        jwks_url = f'https://{env.get("AUTH0_DOMAIN")}/.well-known/jwks.json'
+        
+        jwks_client = PyJWKClient(jwks_url)
+        signing_key = jwks_client.get_signing_key_from_jwt(token_id)
+        print("Verify json")
+        data = jwt.decode(
+            token_id,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_exp": True, "verify_aud": False},
+        )
+        
+        print("data: ", data)
+        
+        return JSONResponse({"message": "Token verification successful"})
+    
+    except jwt.ExpiredSignatureError as e:
+        raise HTTPException(status_code=401, detail="Token verification failed: Invalid token") from e
+    
+    except jwt.InvalidSignatureError as e:
+        raise HTTPException(status_code=401, detail="Signature verification failed") from e
+    
+    except jwt.PyJWKClientError as e:
+        raise HTTPException(status_code=401, detail="Failed to parse token") from e
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Broken token") from e
 
 
 @auth_router.route("/logout")
